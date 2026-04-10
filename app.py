@@ -5,64 +5,84 @@ from bs4 import BeautifulSoup
 import os
 from dotenv import load_dotenv
 
+# 1. SETUP - Using the working configuration
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=API_KEY)
 
-# --- 2026 STABLE MODEL NAMES ---
-# Google sunset the '1.5' names. Use these aliases to avoid 404s:
-FLASH_MODEL = 'gemini-2.5-flash' 
-PRO_MODEL = 'gemini-2.5-pro'
-
-# --- SCRAPER ---
+# 2. THE SCRAPER (PinWiki & Pinside)
 def get_repair_context(system, is_em, model_name, issue):
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     context = ""
+    
+    # Target PinWiki
     wiki_path = "EM_Repair" if is_em else system.replace(" ", "_")
     try:
-        res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
-        context += BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:3000]
+        wiki_res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
+        if wiki_res.status_code == 200:
+            context += BeautifulSoup(wiki_res.text, 'html.parser').find(id="mw-content-text").get_text()[:3000]
     except: pass
+
+    # Target Pinside
+    search_q = f"{model_name} {issue}".replace(" ", "+")
+    try:
+        pinside_res = requests.get(f"https://pinside.com/pinball/forum/search?s={search_q}", headers=headers, timeout=5)
+        if pinside_res.status_code == 200:
+            soup = BeautifulSoup(pinside_res.text, 'html.parser')
+            threads = soup.find_all('div', class_='search-result-content')
+            context += "\n\nCommunity Insights:\n" + "\n".join([t.get_text(strip=True) for t in threads[:2]])
+    except: pass
+    
     return context
 
-# --- UI ---
+# 3. UI SETUP
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 st.title("🩺 Pinball Doctor")
 
 with st.sidebar:
-    st.header("1. Connection Test")
-    if st.button("Check API Connection"):
-        try:
-            # This lists models available to YOUR specific key
-            models = [m.name for m in genai.list_models()]
-            st.success("Connected!")
-            st.write("Available Models:", models)
-        except Exception as e:
-            st.error(f"Connection Failed: {e}")
-
-    st.header("2. Machine Specs")
+    st.header("Machine Specs")
     is_em = st.checkbox("Electromechanical (EM) Game")
+    
     if is_em:
-        system = st.selectbox("Manufacturer", ["Gottlieb", "Williams", "Bally", "Chicago Coin"])
+        system = st.selectbox("Manufacturer", ["Gottlieb", "Williams", "Bally", "Chicago Coin", "United"])
     else:
-        system = st.selectbox("System Architecture", ["Stern SPIKE 2", "Stern SAM", "Williams WPC", "Data East"])
+        system = st.selectbox("System Architecture", [
+            "Stern SPIKE 2", "Stern SPIKE 1", "Stern SAM", "Stern Whitestar", 
+            "Stern MPU-200", "Williams WPC", "Williams System 11", 
+            "Bally 6803", "Data East", "Gottlieb System 1", "Gottlieb System 80"
+        ])
+
     model_name = st.text_input("Machine Name", value="")
 
 issue = st.text_area("Diagnosis Request", value="Describe the issue")
 
 if st.button("Run Diagnostic"):
     if not model_name or issue == "Describe the issue":
-        st.warning("Please fill out the fields.")
+        st.warning("Please enter a Machine Name and describe the symptoms.")
     else:
-        with st.spinner("Analyzing..."):
+        with st.spinner("Consulting the archives..."):
             kb_data = get_repair_context(system, is_em, model_name, issue)
-            prompt = f"Expert Pinball Repair: {model_name} ({system}). Issue: {issue}. Context: {kb_data}"
+            
+            prompt = f"""
+            Role: Expert Pinball Technician
+            Machine: {model_name} ({system})
+            Issue: {issue}
+            Context: {kb_data}
+            
+            Provide a diagnosis, repair steps, and parts list.
+            """
             
             try:
-                # Using the 2.5-flash alias which replaced 1.5-flash
-                model = genai.GenerativeModel(FLASH_MODEL)
+                # FIXED: These are the 2026 stable model names to prevent 404s
+                model = genai.GenerativeModel('gemini-2.5-flash') 
                 response = model.generate_content(prompt)
+                st.success(f"Diagnosis for {model_name} Ready")
                 st.markdown(response.text)
             except Exception as e:
-                st.error(f"API Error: {e}")
-                st.info("Try checking the 'Connection Test' in the sidebar to see which model names your key supports.")
+                # If you still see a 404, we'll use the 'latest' alias as a backup
+                try:
+                    model = genai.GenerativeModel('gemini-2.5-pro')
+                    response = model.generate_content(prompt)
+                    st.markdown(response.text)
+                except:
+                    st.error(f"API Error: {e}")
