@@ -60,8 +60,8 @@ def process_request(user_input, history, specs=None, image=None):
                 specs = {"mfg": "Unknown", "system": "General", "is_em": False, "game": "Pinball Machine"}
             st.session_state.specs = specs
 
-    pinside_data = search_pinside(specs.get('game'), user_input)
-    ipdb_data = find_ipdb_schematics(specs.get('game'))
+    pinside_data = search_pinside(specs.get('game', 'Unknown'), user_input)
+    ipdb_data = find_ipdb_schematics(specs.get('game', 'Unknown'))
     
     wiki_context = ""
     try:
@@ -129,10 +129,9 @@ if st.session_state.authenticated:
             with st.spinner("Consulting the Trinity..."):
                 img = Image.open(uploaded_file) if uploaded_file else None
                 history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
-                # RESTORED: The actual call to the AI logic
                 answer, specs = process_request(prompt, history, st.session_state.specs, image=img)
                 st.markdown(answer)
                 st.session_state.messages.append({"role": "assistant", "content": answer})
 else:
     st.title("🩺 Pinball Doctor")
-    st.warning("Enter Tech Password
+    st.warning("Please enter the Tech Password in the sidebar to begin diagnosis.")
