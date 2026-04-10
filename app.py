@@ -6,7 +6,7 @@ import os
 import json
 from dotenv import load_dotenv
 
-# --- SETUP ---
+# --- SETUP (NO CHANGES TO GOOGLE CALLS) ---
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=API_KEY)
@@ -20,11 +20,9 @@ if "specs" not in st.session_state:
 # --- CSS HACK FOR SPACING ---
 st.markdown("""
     <style>
-    /* Reduces the gap between the main content and the bottom chat input */
     .block-container {
         padding-bottom: 5rem;
     }
-    /* Tightens the spacing for the caption */
     .stCaption {
         margin-top: -20px;
         margin-bottom: 10px;
@@ -34,10 +32,11 @@ st.markdown("""
 
 # --- AI HELPERS ---
 def process_request(user_input, history, specs=None):
+    # Your locked-in working model call
     model = genai.GenerativeModel('gemini-1.5-flash')
     
     if not specs:
-        id_prompt = f"Identify pinball machine and system for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":bool, \"game\":\"\"}}"
+        id_prompt = f"Identify pinball machine for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":bool, \"game\":\"\"}}"
         try:
             res = model.generate_content(id_prompt)
             specs = json.loads(res.text.strip().replace('```json', '').replace('```', ''))
@@ -58,8 +57,6 @@ def process_request(user_input, history, specs=None):
     History: {history}
     Current Input: {user_input}
     Technical Context: {context}
-    
-    If the user says a fix failed, offer a different technical path.
     """
     response = model.generate_content(full_prompt)
     return response.text, specs
@@ -72,19 +69,18 @@ if not st.session_state.specs:
     st.info("What's the machine and the issue?")
 else:
     s = st.session_state.specs
-    # Caption styling is now handled by the CSS above
     st.caption(f"🔧 Repairing: **{s['game']}** | {s['mfg']} {s['system']}")
     if st.sidebar.button("New Case"):
         st.session_state.clear()
         st.rerun()
 
-# Display Chat
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Empty placeholder "" ensures the box is blank on start
-if prompt := st.chat_input("", placeholder=""):
+# FIXED LINE: 
+# Removed 'placeholder=' keyword. Just an empty string "" works to keep it blank.
+if prompt := st.chat_input(""):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
