@@ -10,76 +10,81 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=API_KEY)
+MODEL_NAME = 'gemini-3-flash-preview' # 2026 stable alias
 
-# Using the 2026 'stable alias' to prevent 404 errors
-MODEL_NAME = 'gemini-3-flash-preview' 
+# --- PERSISTENCE: Initialize Session State ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [] # Stores chat history
+if "specs" not in st.session_state:
+    st.session_state.specs = None # Stores machine info
 
-# --- STEP 1: THE CLASSIFIER ---
+# --- HELPER: Machine Identification ---
 def identify_machine(game_name):
-    """Hidden logic that replaces the sidebar dropdowns."""
     model = genai.GenerativeModel(MODEL_NAME)
-    prompt = f"""
-    Act as a pinball historian. For the game "{game_name}", identify:
-    1. Manufacturer (e.g., Williams, Stern, Bally)
-    2. System Architecture (e.g., WPC, SPIKE 2, System 11)
-    3. Technology (Is it 'EM' or 'Solid State'?)
-    
-    Return ONLY a JSON object: {{"mfg": "Name", "system": "System", "is_em": true/false}}
-    """
+    prompt = f"Identify pinball mfg and system for '{game_name}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":bool}}"
     try:
         response = model.generate_content(prompt)
-        # Cleaning the AI output to ensure valid JSON
         clean_text = response.text.strip().replace('```json', '').replace('```', '')
         return json.loads(clean_text)
     except:
-        # Fallback if AI struggles with a weird name
         return {"mfg": "Unknown", "system": "General", "is_em": False}
 
-# --- STEP 2: THE SCRAPER ---
-def get_wiki_data(specs):
-    wiki_path = "EM_Repair" if specs['is_em'] else specs['system'].replace(" ", "_")
-    try:
-        res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
-        return BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:3000]
-    except:
-        return "Manual data unavailable."
-
-# --- UI SETUP (No Sidebar!) ---
+# --- UI SETUP ---
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 st.title("🩺 Pinball Doctor")
-st.info("No more dropdowns. Just tell me what's broken.")
 
-game_input = st.text_input("Machine Name", placeholder="e.g., Addams Family, 1974 Fireball, or Foo Fighters")
-issue_input = st.text_area("Diagnosis Request", value="Describe the issue")
+# Sidebar: Start New Repair
+with st.sidebar:
+    if st.button("New Repair Case"):
+        st.session_state.messages = []
+        st.session_state.specs = None
+        st.rerun()
 
-if st.button("Fix It"):
-    if not game_input or issue_input == "Describe the issue":
-        st.warning("I need both the game name and the issue to help!")
-    else:
-        with st.spinner("Identifying machine specs..."):
-            specs = identify_machine(game_input)
-            st.caption(f"**Detected:** {specs['mfg']} {specs['system']} ({'EM' if specs['is_em'] else 'Solid State'})")
-            
-        with st.spinner("Analyzing repair databases..."):
-            context = get_wiki_data(specs)
-            
-            # Final Expert Diagnosis
-            prompt = f"""
-            You are Pinball Doctor. 
-            Machine: {game_input} ({specs['mfg']} {specs['system']})
-            Issue: {issue_input}
-            Context: {context}
-            
-            Provide:
-            1. Likely Cause
-            2. Step-by-Step Repair
-            3. Required Parts
-            """
-            
-            try:
-                doctor = genai.GenerativeModel(MODEL_NAME)
-                result = doctor.generate_content(prompt)
-                st.success(f"Diagnosis for {game_input} Ready")
-                st.markdown(result.text)
-            except Exception as e:
-                st.error(f"API Error: {e}")
+# 1. First time setup: Ask for the machine name
+if not st.session_state.specs:
+    game_input = st.text_input("Which machine are we looking at today?", placeholder="e.g. Black Knight 2000")
+    if st.button("Start Diagnosis"):
+        st.session_state.specs = identify_machine(game_input)
+        st.session_state.game_name = game_input
+        st.rerun()
+
+# 2. Ongoing Diagnosis (The Chat)
+else:
+    specs = st.session_state.specs
+    st.info(f"Diagnosing: **{st.session_state.game_name}** ({specs['mfg']} {specs['system']})")
+
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat Input
+    if prompt := st.chat_input("Describe the issue or update me on the last fix..."):
+        # Add user message to state
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Generate Doctor Response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                # Construct conversation context for the AI
+                history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+                
+                full_query = f"""
+                You are Pinball Doctor. 
+                Machine Specs: {specs}
+                Conversation History:
+                {history_context}
+                
+                If the user says a fix didn't work, apologize and suggest the next logical step (e.g. check ground wires, transistors, or relay gapping). 
+                If they uncover new symptoms, incorporate them into the new diagnosis.
+                """
+                
+                try:
+                    model = genai.GenerativeModel(MODEL_NAME)
+                    response = model.generate_content(full_query)
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                except Exception as e:
+                    st.error(f"API Error: {e}")
