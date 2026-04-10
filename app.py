@@ -6,35 +6,45 @@ import os
 import json
 from dotenv import load_dotenv
 
-# --- 2026 SETUP ---
+# --- SETUP ---
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=API_KEY)
 
-# This is the 2026 stable model that replaces 'gemini-1.5-flash'
-MODEL_NAME = 'gemini-2.5-flash'
-
+# PERSISTENCE
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "specs" not in st.session_state:
     st.session_state.specs = None
 
+# --- CSS HACK FOR SPACING ---
+st.markdown("""
+    <style>
+    /* Reduces the gap between the main content and the bottom chat input */
+    .block-container {
+        padding-bottom: 5rem;
+    }
+    /* Tightens the spacing for the caption */
+    .stCaption {
+        margin-top: -20px;
+        margin-bottom: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 # --- AI HELPERS ---
 def process_request(user_input, history, specs=None):
-    model = genai.GenerativeModel(MODEL_NAME)
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # 1. Identify machine if first time
     if not specs:
-        id_prompt = f"Identify pinball machine for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
+        id_prompt = f"Identify pinball machine and system for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":bool, \"game\":\"\"}}"
         try:
             res = model.generate_content(id_prompt)
-            clean_text = res.text.strip().replace('```json', '').replace('```', '')
-            specs = json.loads(clean_text)
+            specs = json.loads(res.text.strip().replace('```json', '').replace('```', ''))
             st.session_state.specs = specs
         except: 
-            return "Doctor: I couldn't identify that machine. Please try again with the full name.", None
+            return "Doctor: I couldn't identify that machine. Please try again.", None
 
-    # 2. Get Knowledge Base Context
     context = ""
     wiki_path = "EM_Repair" if specs.get('is_em') else specs.get('system', '').replace(" ", "_")
     try:
@@ -42,10 +52,9 @@ def process_request(user_input, history, specs=None):
         context = BeautifulSoup(wiki_res.text, 'html.parser').find(id="mw-content-text").get_text()[:2500]
     except: pass
 
-    # 3. Diagnosis
     full_prompt = f"""
     You are Pinball Doctor. 
-    Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})
+    Machine: {specs['game']} ({specs['mfg']} {specs['system']})
     History: {history}
     Current Input: {user_input}
     Technical Context: {context}
@@ -63,7 +72,8 @@ if not st.session_state.specs:
     st.info("What's the machine and the issue?")
 else:
     s = st.session_state.specs
-    st.caption(f"🔧 Repairing: **{s.get('game')}** | {s.get('mfg')} {s.get('system')}")
+    # Caption styling is now handled by the CSS above
+    st.caption(f"🔧 Repairing: **{s['game']}** | {s['mfg']} {s['system']}")
     if st.sidebar.button("New Case"):
         st.session_state.clear()
         st.rerun()
@@ -73,8 +83,8 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Single Combined Input Box
-if prompt := st.chat_input("Machine and Issue..."):
+# Empty placeholder "" ensures the box is blank on start
+if prompt := st.chat_input("", placeholder=""):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
