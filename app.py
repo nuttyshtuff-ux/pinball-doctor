@@ -5,88 +5,90 @@ from bs4 import BeautifulSoup
 import os
 from dotenv import load_dotenv
 
-# 1. SETUP & CONFIG
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
+# 2026 Model Check: Using 'gemini-3-flash-preview' as it is the current 
+# stable alias to avoid the 404s you saw with 1.5 versions.
+MODEL_NAME = 'gemini-3-flash-preview'
+
 if not API_KEY:
-    st.error("Missing API Key! Please add GOOGLE_API_KEY to your .env file.")
+    st.error("Missing API Key in .env!")
     st.stop()
 
 genai.configure(api_key=API_KEY)
 
-# Use the latest 2026 model strings to avoid 404s
-# 'gemini-3-flash-preview' is the current high-speed workhorse
-MODEL_NAME = 'gemini-3-flash-preview' 
-
-# 2. THE WEBSCRAPER (PinWiki Specialist)
-def get_pinwiki_data(game_system):
-    """
-    Scrapes repair guides from PinWiki based on the game system (e.g., 'Williams WPC').
-    """
-    # Example URL structure for PinWiki repair guides
-    search_query = game_system.replace(" ", "_")
-    url = f"https://pinwiki.com/wiki/index.php/{search_query}_Repair_Selection"
+def get_pinwiki_data(category, system):
+    """Enhanced scraper for both SS (Solid State) and EM (Electromechanical)."""
+    if category == "Electromechanical (EM)":
+        url = "https://pinwiki.com/wiki/index.php/EM_Repair"
+    else:
+        # Formats the system name for the Wiki URL (e.g., Williams_WPC)
+        formatted_system = system.replace(" ", "_")
+        url = f"https://pinwiki.com/wiki/index.php/{formatted_system}"
     
     try:
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            # Get the main text content, stripping out nav and scripts
             content = soup.find(id="mw-content-text")
-            return content.get_text()[:5000]  # Return first 5k chars as context
-        else:
-            return "Could not find specific PinWiki guide for this system."
-    except Exception as e:
-        return f"Scraper error: {str(e)}"
+            return content.get_text()[:6000] # Increased context window
+        return f"Note: Direct PinWiki guide for {system} not found. AI will use general knowledge."
+    except:
+        return "Scraper encountered an issue. AI will proceed with internal training data."
 
-# 3. STREAMLIT UI
-st.set_page_config(page_title="Pinball Doctor", page_icon="🕹️")
-
-st.title("🩺 Pinball Doctor")
-st.markdown("### Expert Diagnosis & Repair Guide")
+# --- UI SETUP ---
+st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
+st.title("🩺 Pinball Doctor v2.0")
 
 with st.sidebar:
-    st.header("Machine Profile")
-    system = st.selectbox("Game System", 
-                          ["Williams WPC", "Bally 6803", "Data East", "Stern SPIKE", "Gottlieb System 1"])
-    model_name = st.text_input("Specific Model (e.g., Addams Family)", "Addams Family")
+    st.header("Machine Specs")
+    
+    # Combined category for easier navigation
+    game_type = st.radio("Technology", ["Solid State (SS)", "Electromechanical (EM)"])
+    
+    if game_type == "Solid State (SS)":
+        system = st.selectbox("System Architecture", [
+            "Williams WPC", "Stern SPIKE 1", "Stern SPIKE 2", 
+            "Stern SAM", "Stern Whitestar", "Stern MPU-200",
+            "Bally 6803", "Data East", "Gottlieb System 1"
+        ])
+    else:
+        system = st.selectbox("Manufacturer (EM Era)", ["Gottlieb", "Williams", "Bally", "Chicago Coin"])
 
-st.info(f"Currently diagnosing: **{model_name}** ({system})")
+    model_name = st.text_input("Game Name", "Addams Family")
 
-issue = st.text_area("Describe the symptoms (e.g., 'Left flipper is weak and making a buzzing sound')", height=150)
+st.markdown(f"### Diagnosing: **{model_name}**")
+issue = st.text_area("What is the machine doing (or not doing)?", placeholder="Example: The score motor keeps spinning and won't start a game...")
 
-if st.button("Start Diagnosis"):
-    with st.spinner("Consulting repair manuals and forum data..."):
-        # Step A: Scrape fresh data
-        wiki_context = get_pinwiki_data(system)
+if st.button("Run Diagnostic"):
+    with st.spinner("Analyzing mechanical relays and circuit logic..."):
+        # Fetch knowledge base
+        context = get_pinwiki_data(game_type, system)
         
-        # Step B: Construct the prompt with RAG (Retrieval-Augmented Generation)
+        # Expert Persona Prompt
         prompt = f"""
-        You are 'Pinball Doctor', an expert pinball technician. 
-        Use the following technical context from PinWiki to help diagnose the user's issue.
+        You are 'Pinball Doctor'. You have 40 years of experience.
         
-        TECHNICAL CONTEXT:
-        {wiki_context}
+        CONTEXT DATA:
+        {context}
         
-        USER ISSUE:
-        Machine: {model_name} ({system})
+        USER PROBLEM:
+        Technology: {game_type}
+        System: {system}
+        Model: {model_name}
         Symptom: {issue}
         
-        PLEASE PROVIDE:
-        1. Possible Cause (Diagnosis)
-        2. Step-by-Step Repair Instructions
-        3. Parts Needed (and common suppliers like Marco Specialties or Pinball Life)
-        4. Safety Warnings (High voltage areas to avoid)
+        INSTRUCTIONS:
+        1. If EM: Focus on relay cleaning, score motor 'home' switches, and steppers.
+        2. If SS: Focus on MPU LEDs, voltages, and connectors.
+        3. Provide: Diagnosis, Step-by-Step Fix, and Parts needed.
         """
         
         try:
             model = genai.GenerativeModel(MODEL_NAME)
             response = model.generate_content(prompt)
-            
-            st.success("Diagnosis Complete")
+            st.success("Analysis Complete")
             st.markdown(response.text)
-            
         except Exception as e:
-            st.error(f"AI Error: {str(e)}")
-            st.info("Tip: If you see a 404, check if 'gemini-3-flash-preview' is still the active alias in AI Studio.")
+            st.error(f"API Error: {e}")
