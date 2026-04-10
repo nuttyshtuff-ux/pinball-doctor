@@ -1,5 +1,5 @@
 🩺 Pinball Doctor
-Pinball Doctor is an AI-powered diagnostic tool for pinball technicians. It combines factory documentation, community forum wisdom, and advanced computer vision to help you solve repair issues faster.
+ is an AI-powered diagnostic tool for pinball technicians. It combines factory documentation, community forum wisdom, and advanced computer vision to help you solve repair issues faster.
 
 🌐 Live Web App
 Access the tool directly in your browser:
