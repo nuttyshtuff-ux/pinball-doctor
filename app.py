@@ -7,88 +7,76 @@ from dotenv import load_dotenv
 
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
-
-# 2026 Model Check: Using 'gemini-3-flash-preview' as it is the current 
-# stable alias to avoid the 404s you saw with 1.5 versions.
-MODEL_NAME = 'gemini-3-flash-preview'
-
-if not API_KEY:
-    st.error("Missing API Key in .env!")
-    st.stop()
+MODEL_NAME = 'gemini-3-flash-preview' # 2026 stable alias
 
 genai.configure(api_key=API_KEY)
 
-def get_pinwiki_data(category, system):
-    """Enhanced scraper for both SS (Solid State) and EM (Electromechanical)."""
-    if category == "Electromechanical (EM)":
-        url = "https://pinwiki.com/wiki/index.php/EM_Repair"
-    else:
-        # Formats the system name for the Wiki URL (e.g., Williams_WPC)
-        formatted_system = system.replace(" ", "_")
-        url = f"https://pinwiki.com/wiki/index.php/{formatted_system}"
+# --- SCRAPER 1: PINWIKI ---
+def get_pinwiki_data(system):
+    formatted = system.replace(" ", "_")
+    url = f"https://pinwiki.com/wiki/index.php/{formatted}"
+    try:
+        res = requests.get(url, timeout=5)
+        return BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:4000]
+    except:
+        return ""
+
+# --- SCRAPER 2: PINSIDE (New!) ---
+def get_pinside_data(query):
+    """Searches Pinside forum topics for the specific issue."""
+    # Pinside requires a 'User-Agent' header to look like a real browser
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    search_url = f"https://pinside.com/pinball/forum/search?s={query.replace(' ', '+')}"
     
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            content = soup.find(id="mw-content-text")
-            return content.get_text()[:6000] # Increased context window
-        return f"Note: Direct PinWiki guide for {system} not found. AI will use general knowledge."
+        res = requests.get(search_url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            # Extract snippets from the search result titles and descriptions
+            threads = soup.find_all('div', class_='search-result-content')
+            context = "Recent Pinside Discussions:\n"
+            for t in threads[:3]: # Grab the top 3 relevant threads
+                context += f"- {t.get_text(separator=' ', strip=True)}\n"
+            return context
+        return "Pinside search unavailable."
     except:
-        return "Scraper encountered an issue. AI will proceed with internal training data."
+        return "Could not reach Pinside."
 
-# --- UI SETUP ---
+# --- UI ---
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
-st.title("🩺 Pinball Doctor v2.0")
+st.title("🩺 Pinball Doctor v3.0")
 
 with st.sidebar:
-    st.header("Machine Specs")
-    
-    # Combined category for easier navigation
-    game_type = st.radio("Technology", ["Solid State (SS)", "Electromechanical (EM)"])
-    
-    if game_type == "Solid State (SS)":
-        system = st.selectbox("System Architecture", [
-            "Williams WPC", "Stern SPIKE 1", "Stern SPIKE 2", 
-            "Stern SAM", "Stern Whitestar", "Stern MPU-200",
-            "Bally 6803", "Data East", "Gottlieb System 1"
-        ])
-    else:
-        system = st.selectbox("Manufacturer (EM Era)", ["Gottlieb", "Williams", "Bally", "Chicago Coin"])
+    st.header("Settings")
+    system = st.selectbox("System", ["Williams WPC", "Stern SPIKE 2", "Bally 6803", "EM Repair"])
+    model_name = st.text_input("Machine Name", "The Addams Family")
 
-    model_name = st.text_input("Game Name", "Addams Family")
+issue = st.text_area("What's the problem?", "The Thing hand is stuck.")
 
-st.markdown(f"### Diagnosing: **{model_name}**")
-issue = st.text_area("What is the machine doing (or not doing)?", placeholder="Example: The score motor keeps spinning and won't start a game...")
-
-if st.button("Run Diagnostic"):
-    with st.spinner("Analyzing mechanical relays and circuit logic..."):
-        # Fetch knowledge base
-        context = get_pinwiki_data(game_type, system)
+if st.button("Diagnose"):
+    with st.spinner("Searching PinWiki and Pinside..."):
+        # 1. Gather Context
+        wiki = get_pinwiki_data(system)
+        pinside = get_pinside_data(f"{model_name} {issue}")
         
-        # Expert Persona Prompt
-        prompt = f"""
-        You are 'Pinball Doctor'. You have 40 years of experience.
+        # 2. Build Prompt
+        full_prompt = f"""
+        You are Pinball Doctor. 
+        KNOWLEDGE BASE 1 (PinWiki): {wiki}
+        KNOWLEDGE BASE 2 (Pinside): {pinside}
         
-        CONTEXT DATA:
-        {context}
+        ISSUE: {model_name} - {issue}
         
-        USER PROBLEM:
-        Technology: {game_type}
-        System: {system}
-        Model: {model_name}
-        Symptom: {issue}
-        
-        INSTRUCTIONS:
-        1. If EM: Focus on relay cleaning, score motor 'home' switches, and steppers.
-        2. If SS: Focus on MPU LEDs, voltages, and connectors.
-        3. Provide: Diagnosis, Step-by-Step Fix, and Parts needed.
+        Based on the technical data and community discussions above, provide a 
+        repair guide including parts and common 'Pinside' community fixes.
         """
         
+        # 3. Call AI
         try:
             model = genai.GenerativeModel(MODEL_NAME)
-            response = model.generate_content(prompt)
-            st.success("Analysis Complete")
+            response = model.generate_content(full_prompt)
             st.markdown(response.text)
         except Exception as e:
-            st.error(f"API Error: {e}")
+            st.error(f"Error: {e}")
