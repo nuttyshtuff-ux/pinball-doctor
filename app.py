@@ -3,86 +3,83 @@ import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import os
+import json
 from dotenv import load_dotenv
 
-# 1. SETUP - Using the working configuration
+# --- SETUP ---
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=API_KEY)
 
-# 2. THE SCRAPER (PinWiki & Pinside)
-def get_repair_context(system, is_em, model_name, issue):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    context = ""
-    
-    # Target PinWiki
-    wiki_path = "EM_Repair" if is_em else system.replace(" ", "_")
-    try:
-        wiki_res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
-        if wiki_res.status_code == 200:
-            context += BeautifulSoup(wiki_res.text, 'html.parser').find(id="mw-content-text").get_text()[:3000]
-    except: pass
+# Using the 2026 'stable alias' to prevent 404 errors
+MODEL_NAME = 'gemini-3-flash-preview' 
 
-    # Target Pinside
-    search_q = f"{model_name} {issue}".replace(" ", "+")
-    try:
-        pinside_res = requests.get(f"https://pinside.com/pinball/forum/search?s={search_q}", headers=headers, timeout=5)
-        if pinside_res.status_code == 200:
-            soup = BeautifulSoup(pinside_res.text, 'html.parser')
-            threads = soup.find_all('div', class_='search-result-content')
-            context += "\n\nCommunity Insights:\n" + "\n".join([t.get_text(strip=True) for t in threads[:2]])
-    except: pass
+# --- STEP 1: THE CLASSIFIER ---
+def identify_machine(game_name):
+    """Hidden logic that replaces the sidebar dropdowns."""
+    model = genai.GenerativeModel(MODEL_NAME)
+    prompt = f"""
+    Act as a pinball historian. For the game "{game_name}", identify:
+    1. Manufacturer (e.g., Williams, Stern, Bally)
+    2. System Architecture (e.g., WPC, SPIKE 2, System 11)
+    3. Technology (Is it 'EM' or 'Solid State'?)
     
-    return context
+    Return ONLY a JSON object: {{"mfg": "Name", "system": "System", "is_em": true/false}}
+    """
+    try:
+        response = model.generate_content(prompt)
+        # Cleaning the AI output to ensure valid JSON
+        clean_text = response.text.strip().replace('```json', '').replace('```', '')
+        return json.loads(clean_text)
+    except:
+        # Fallback if AI struggles with a weird name
+        return {"mfg": "Unknown", "system": "General", "is_em": False}
 
-# 3. UI SETUP
+# --- STEP 2: THE SCRAPER ---
+def get_wiki_data(specs):
+    wiki_path = "EM_Repair" if specs['is_em'] else specs['system'].replace(" ", "_")
+    try:
+        res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
+        return BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:3000]
+    except:
+        return "Manual data unavailable."
+
+# --- UI SETUP (No Sidebar!) ---
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 st.title("🩺 Pinball Doctor")
+st.info("No more dropdowns. Just tell me what's broken.")
 
-with st.sidebar:
-    st.header("Machine Specs")
-    is_em = st.checkbox("Electromechanical (EM) Game")
-    
-    if is_em:
-        system = st.selectbox("Manufacturer", ["Gottlieb", "Williams", "Bally", "Chicago Coin", "United"])
+game_input = st.text_input("Machine Name", placeholder="e.g., Addams Family, 1974 Fireball, or Foo Fighters")
+issue_input = st.text_area("Diagnosis Request", value="Describe the issue")
+
+if st.button("Fix It"):
+    if not game_input or issue_input == "Describe the issue":
+        st.warning("I need both the game name and the issue to help!")
     else:
-        system = st.selectbox("System Architecture", [
-            "Stern SPIKE 2", "Stern SPIKE 1", "Stern SAM", "Stern Whitestar", 
-            "Stern MPU-200", "Williams WPC", "Williams System 11", 
-            "Bally 6803", "Data East", "Gottlieb System 1", "Gottlieb System 80"
-        ])
-
-    model_name = st.text_input("Machine Name", value="")
-
-issue = st.text_area("Diagnosis Request", value="Describe the issue")
-
-if st.button("Run Diagnostic"):
-    if not model_name or issue == "Describe the issue":
-        st.warning("Please enter a Machine Name and describe the symptoms.")
-    else:
-        with st.spinner("Consulting the archives..."):
-            kb_data = get_repair_context(system, is_em, model_name, issue)
+        with st.spinner("Identifying machine specs..."):
+            specs = identify_machine(game_input)
+            st.caption(f"**Detected:** {specs['mfg']} {specs['system']} ({'EM' if specs['is_em'] else 'Solid State'})")
             
+        with st.spinner("Analyzing repair databases..."):
+            context = get_wiki_data(specs)
+            
+            # Final Expert Diagnosis
             prompt = f"""
-            Role: Expert Pinball Technician
-            Machine: {model_name} ({system})
-            Issue: {issue}
-            Context: {kb_data}
+            You are Pinball Doctor. 
+            Machine: {game_input} ({specs['mfg']} {specs['system']})
+            Issue: {issue_input}
+            Context: {context}
             
-            Provide a diagnosis, repair steps, and parts list.
+            Provide:
+            1. Likely Cause
+            2. Step-by-Step Repair
+            3. Required Parts
             """
             
             try:
-                # FIXED: These are the 2026 stable model names to prevent 404s
-                model = genai.GenerativeModel('gemini-2.5-flash') 
-                response = model.generate_content(prompt)
-                st.success(f"Diagnosis for {model_name} Ready")
-                st.markdown(response.text)
+                doctor = genai.GenerativeModel(MODEL_NAME)
+                result = doctor.generate_content(prompt)
+                st.success(f"Diagnosis for {game_input} Ready")
+                st.markdown(result.text)
             except Exception as e:
-                # If you still see a 404, we'll use the 'latest' alias as a backup
-                try:
-                    model = genai.GenerativeModel('gemini-2.5-pro')
-                    response = model.generate_content(prompt)
-                    st.markdown(response.text)
-                except:
-                    st.error(f"API Error: {e}")
+                st.error(f"API Error: {e}")
