@@ -1,7 +1,3 @@
-You're absolutely right to simplify. For most people, the "web app" part just means they can click a link and use it without touching a terminal. Since you are hosting on Streamlit Cloud, they don't need to install anything or run code.
-
-Here is a revised, "User-First" README.md that treats the project like a live web tool rather than a developer package.
-
 🩺 Pinball Doctor
 Pinball Doctor is an AI-powered diagnostic tool for pinball technicians. It combines the technical depth of PinWiki, the manuals of IPDB, and the vision of Google Gemini to help you fix machines faster.
 
