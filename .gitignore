@@ -1,0 +1,14 @@
+# Security: Never upload the secrets file
+.env
+.streamlit/secrets.toml
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Streamlit logs
+.streamlit/
