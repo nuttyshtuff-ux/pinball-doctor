@@ -10,81 +10,77 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=API_KEY)
-MODEL_NAME = 'gemini-3-flash-preview' # 2026 stable alias
 
-# --- PERSISTENCE: Initialize Session State ---
+# PERSISTENCE
 if "messages" not in st.session_state:
-    st.session_state.messages = [] # Stores chat history
+    st.session_state.messages = []
 if "specs" not in st.session_state:
-    st.session_state.specs = None # Stores machine info
+    st.session_state.specs = None
 
-# --- HELPER: Machine Identification ---
-def identify_machine(game_name):
-    model = genai.GenerativeModel(MODEL_NAME)
-    prompt = f"Identify pinball mfg and system for '{game_name}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":bool}}"
+# --- AI HELPERS ---
+def process_request(user_input, history, specs=None):
+    # BACK TO THE WORKING MODEL STRING
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # 1. Identify machine if we haven't yet
+    if not specs:
+        id_prompt = f"Identify pinball machine and system for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":bool, \"game\":\"\"}}"
+        try:
+            res = model.generate_content(id_prompt)
+            specs = json.loads(res.text.strip().replace('```json', '').replace('```', ''))
+            st.session_state.specs = specs
+        except: 
+            return "Doctor: I couldn't identify that machine. Could you tell me the name again?", None
+
+    # 2. Get Scraper Context
+    context = ""
+    wiki_path = "EM_Repair" if specs.get('is_em') else specs.get('system', '').replace(" ", "_")
     try:
-        response = model.generate_content(prompt)
-        clean_text = response.text.strip().replace('```json', '').replace('```', '')
-        return json.loads(clean_text)
-    except:
-        return {"mfg": "Unknown", "system": "General", "is_em": False}
+        wiki_res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
+        context = BeautifulSoup(wiki_res.text, 'html.parser').find(id="mw-content-text").get_text()[:2500]
+    except: pass
 
-# --- UI SETUP ---
+    # 3. Diagnosis
+    full_prompt = f"""
+    You are Pinball Doctor. 
+    Machine: {specs['game']} ({specs['mfg']} {specs['system']})
+    History: {history}
+    Current Input: {user_input}
+    Technical Context: {context}
+    
+    If the user says a fix failed, offer a different technical path.
+    If they give new symptoms, adjust your diagnosis.
+    """
+    response = model.generate_content(full_prompt)
+    return response.text, specs
+
+# --- UI ---
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 st.title("🩺 Pinball Doctor")
 
-# Sidebar: Start New Repair
-with st.sidebar:
-    if st.button("New Repair Case"):
-        st.session_state.messages = []
-        st.session_state.specs = None
-        st.rerun()
-
-# 1. First time setup: Ask for the machine name
 if not st.session_state.specs:
-    game_input = st.text_input("Which machine are we looking at today?", placeholder="e.g. Black Knight 2000")
-    if st.button("Start Diagnosis"):
-        st.session_state.specs = identify_machine(game_input)
-        st.session_state.game_name = game_input
+    st.info("What's the machine and the issue?")
+else:
+    s = st.session_state.specs
+    st.caption(f"🔧 Repairing: **{s['game']}** | {s['mfg']} {s['system']}")
+    if st.sidebar.button("New Case"):
+        st.session_state.clear()
         st.rerun()
 
-# 2. Ongoing Diagnosis (The Chat)
-else:
-    specs = st.session_state.specs
-    st.info(f"Diagnosing: **{st.session_state.game_name}** ({specs['mfg']} {specs['system']})")
+# Display Chat
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-    # Display chat history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+# Single Combined Input Box
+if prompt := st.chat_input("Machine and Issue..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-    # Chat Input
-    if prompt := st.chat_input("Describe the issue or update me on the last fix..."):
-        # Add user message to state
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        # Generate Doctor Response
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                # Construct conversation context for the AI
-                history_context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
-                
-                full_query = f"""
-                You are Pinball Doctor. 
-                Machine Specs: {specs}
-                Conversation History:
-                {history_context}
-                
-                If the user says a fix didn't work, apologize and suggest the next logical step (e.g. check ground wires, transistors, or relay gapping). 
-                If they uncover new symptoms, incorporate them into the new diagnosis.
-                """
-                
-                try:
-                    model = genai.GenerativeModel(MODEL_NAME)
-                    response = model.generate_content(full_query)
-                    st.markdown(response.text)
-                    st.session_state.messages.append({"role": "assistant", "content": response.text})
-                except Exception as e:
-                    st.error(f"API Error: {e}")
+    with st.chat_message("assistant"):
+        with st.spinner("Diagnosing..."):
+            history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
+            answer, specs = process_request(prompt, history, st.session_state.specs)
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
