@@ -10,9 +10,8 @@ st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 load_dotenv()
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# UNIVERSAL MODEL STRINGS (Adding 'models/' prefix to fix 404/NotFound)
-ID_MODEL = 'models/gemini-1.5-pro'
-DIAG_MODEL = 'models/gemini-1.5-flash'
+# Use the most basic stable names to avoid "NotFound" errors
+MODEL_LIST = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash']
 
 # Session States
 for key in ["messages", "specs", "authenticated"]:
@@ -67,37 +66,40 @@ if prompt := st.chat_input(placeholder):
     with st.chat_message("user"): st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Consulting the Trinity..."):
-            # ID Machine logic with hard-coded fallback to ensure no 404
+        with st.spinner("Diagnosing..."):
+            # ID Machine - Cycle through models if one is 'NotFound'
             if not spec:
-                try:
-                    m_id = genai.GenerativeModel(ID_MODEL)
-                    res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
-                except Exception:
-                    # If Pro fails, we use Flash with the full path
-                    m_id = genai.GenerativeModel(DIAG_MODEL)
-                    res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
+                res_id = None
+                for m_name in MODEL_LIST:
+                    try:
+                        m_id = genai.GenerativeModel(m_name)
+                        res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
+                        break # Success!
+                    except: continue # Try the next model
                 
-                try:
-                    spec = json.loads(res_id.text.strip().replace('```json', '').replace('```', ''))
-                    st.session_state.specs = spec
-                except:
+                if res_id:
+                    try:
+                        spec = json.loads(res_id.text.strip().replace('```json', '').replace('```', ''))
+                        st.session_state.specs = spec
+                    except: spec = {"mfg":"Unknown", "system":"General", "is_em":False, "game":"Pinball Machine"}
+                else:
                     spec = {"mfg":"Unknown", "system":"General", "is_em":False, "game":"Pinball Machine"}
-                    st.session_state.specs = spec
+                st.session_state.specs = spec
 
             pins, wiki = search_trinity(spec.get('game', 'Machine'), prompt, spec.get('system', 'General'), spec.get('is_em', False))
             
-            # Diagnostic
-            m_diag = genai.GenerativeModel(DIAG_MODEL)
-            hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
-            ctx = f"Game: {spec['game']} ({spec['system']})\nPinside: {pins}\nWiki: {wiki}\nIssue: {prompt}\nHistory: {hist}"
-            
-            inputs = [ctx]
-            if up: inputs.append(Image.open(up))
-            
-            try:
-                ans = m_diag.generate_content(inputs).text
-                st.markdown(ans)
-                st.session_state.messages.append({"role": "assistant", "content": ans})
-            except Exception as e:
-                st.error("The Doctor is temporarily unavailable. Please try again in a moment.")
+            # Diagnostic - Attempt to use flash
+            ans = "Error: System could not reach AI. Check API Key."
+            for m_name in MODEL_LIST:
+                try:
+                    m_diag = genai.GenerativeModel(m_name)
+                    hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
+                    ctx = f"Game: {spec['game']} ({spec['system']})\nPinside: {pins}\nWiki: {wiki}\nIssue: {prompt}\nHistory: {hist}"
+                    inputs = [ctx]
+                    if up: inputs.append(Image.open(up))
+                    ans = m_diag.generate_content(inputs).text
+                    break
+                except: continue
+
+            st.markdown(ans)
+            st.session_state.messages.append({"role": "assistant", "content": ans})
