@@ -10,9 +10,9 @@ st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 load_dotenv()
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# APRIL 2026 STABLE ALIASES
-ID_MODEL = 'gemini-3.1-pro'
-DIAG_MODEL = 'gemini-3.1-flash'
+# UNIVERSAL MODEL STRINGS (Adding 'models/' prefix to fix 404/NotFound)
+ID_MODEL = 'models/gemini-1.5-pro'
+DIAG_MODEL = 'models/gemini-1.5-flash'
 
 # Session States
 for key in ["messages", "specs", "authenticated"]:
@@ -68,13 +68,13 @@ if prompt := st.chat_input(placeholder):
 
     with st.chat_message("assistant"):
         with st.spinner("Consulting the Trinity..."):
-            # ID Machine with Fallback logic
+            # ID Machine logic with hard-coded fallback to ensure no 404
             if not spec:
                 try:
                     m_id = genai.GenerativeModel(ID_MODEL)
                     res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
-                except:
-                    # Fallback to Flash if Pro is not found in region
+                except Exception:
+                    # If Pro fails, we use Flash with the full path
                     m_id = genai.GenerativeModel(DIAG_MODEL)
                     res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
                 
@@ -95,6 +95,9 @@ if prompt := st.chat_input(placeholder):
             inputs = [ctx]
             if up: inputs.append(Image.open(up))
             
-            ans = m_diag.generate_content(inputs).text
-            st.markdown(ans)
-            st.session_state.messages.append({"role": "assistant", "content": ans})
+            try:
+                ans = m_diag.generate_content(inputs).text
+                st.markdown(ans)
+                st.session_state.messages.append({"role": "assistant", "content": ans})
+            except Exception as e:
+                st.error("The Doctor is temporarily unavailable. Please try again in a moment.")
