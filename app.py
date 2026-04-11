@@ -25,7 +25,7 @@ API_KEY = st.secrets["GOOGLE_API_KEY"]
 CSE_CX = st.secrets["SEARCH_ENGINE_ID"]
 genai.configure(api_key=API_KEY)
 
-# STABLE MODELS (Guaranteed to exist)
+# Use these models for the best balance of stability and pinball knowledge
 ID_MODEL = 'gemini-1.5-pro'   
 DIAG_MODEL = 'gemini-1.5-flash' 
 
@@ -44,7 +44,8 @@ def search_pinside(game, issue):
         res = requests.get(url, timeout=5).json()
         items = res.get('items', [])
         return "\n".join([f"Pinside: {i['title']} - {i['snippet']}" for i in items[:3]])
-    except: return "No Pinside threads found."
+    except:
+        return "No Pinside threads found."
 
 def find_ipdb_schematics(game_name):
     search_url = f"https://www.ipdb.org/search.cgi?name={game_name.replace(' ', '+')}&searchtype=advanced"
@@ -55,20 +56,18 @@ def find_ipdb_schematics(game_name):
             soup = BeautifulSoup(res.text, 'html.parser')
             links = [f"{a.text}: https://www.ipdb.org{a['href']}" for a in soup.find_all('a', href=True) if "manual" in a.text.lower() or "schematic" in a.text.lower()]
             return "\n".join(links[:2])
-    except: return "No IPDB links found."
+    except:
+        return "No IPDB links found."
 
 # --- AI ENGINE ---
 def process_request(user_input, history, specs=None, image=None):
     if not specs:
         model_id = genai.GenerativeModel(ID_MODEL)
-        id_prompt = f"""
-        Identify the pinball machine: '{user_input}'
-        Return ONLY JSON: {{"mfg":"", "system":"", "is_em":false, "game":""}}
-        Example: 'Blackwater 100' -> {{"mfg":"Bally", "system":"6803", "is_em":false, "game":"Blackwater 100"}}
-        """
+        id_prompt = f"Identify pinball machine for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
         try:
             res = model_id.generate_content(id_prompt)
-            specs = json.loads(res.text.strip().replace('```json', '').replace('```', ''))
+            clean_text = res.text.strip().replace('```json', '').replace('```', '')
+            specs = json.loads(clean_text)
             st.session_state.specs = specs
         except:
             specs = {"mfg": "Unknown", "system": "General", "is_em": False, "game": "Pinball Machine"}
@@ -76,19 +75,24 @@ def process_request(user_input, history, specs=None, image=None):
 
     pinside_data = search_pinside(specs.get('game', 'Unknown'), user_input)
     ipdb_data = find_ipdb_schematics(specs.get('game', 'Unknown'))
+    
     wiki_context = ""
     try:
         sys_name = specs.get('system', 'General').replace(" ", "_")
         wiki_path = "EM_Repair" if specs.get('is_em') else sys_name
         res = requests.get(f"https://pinwiki.com/wiki/index.php/{wiki_path}", timeout=5)
         wiki_context = BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:2000]
-    except: pass
+    except:
+        pass
 
     model_diag = genai.GenerativeModel(DIAG_MODEL)
-    prompt_parts = [f"Role: Expert Pinball Doctor. Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})\nPINSIDE: {pinside_data}\nIPDB: {ipdb_data}\nWIKI: {wiki_context}\nHISTORY: {history}\nISSUE: {user_input}"]
-    if image: prompt_parts.append(image)
+    prompt_content = f"Role: Expert Pinball Doctor. Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})\nPINSIDE: {pinside_data}\nIPDB: {ipdb_data}\nWIKI: {wiki_context}\nHISTORY: {history}\nISSUE: {user_input}"
     
-    response = model_diag.generate_content(prompt_parts)
+    parts = [prompt_content]
+    if image:
+        parts.append(image)
+    
+    response = model_diag.generate_content(parts)
     return response.text, specs
 
 # --- AUTH SCREEN ---
@@ -100,7 +104,8 @@ if not st.session_state.authenticated:
         if tech_pass == st.secrets["TECH_PASSWORD"]:
             st.session_state.authenticated = True
             st.rerun()
-        else: st.error("Access Denied.")
+        else:
+            st.error("Access Denied.")
     st.stop()
 
 # --- SIDEBAR ---
@@ -119,8 +124,32 @@ with st.sidebar:
 # --- MAIN INTERFACE ---
 st.title("🩺 Pinball Doctor")
 
+# Build the placeholder string carefully
 if st.session_state.specs:
     s = st.session_state.specs
-    box_placeholder = f"🔧 {s.get('game')} ({s.get('mfg')} {s.get('system')}) - Ask the Doctor..."
+    box_placeholder = f"🔧 {s.get('game')} - Ask the Doctor..."
 else:
-    box_placeholder = "What's the machine and the issue? (e.g. Blackwater 1
+    box_placeholder = "What's the machine and the issue?"
+
+# Display messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# Input logic
+if prompt := st.chat_input(box_placeholder):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    with st.chat_message("assistant"):
+        with st.spinner("Consulting the Trinity..."):
+            img = Image.open(uploaded_file) if uploaded_file else None
+            # Extract history string
+            history_str = ""
+            for m in st.session_state.messages[:-1]:
+                history_str += f"{m['role']}: {m['content']}\n"
+            
+            answer, current_specs = process_request(prompt, history_str, st.session_state.specs, image=img)
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content":h
