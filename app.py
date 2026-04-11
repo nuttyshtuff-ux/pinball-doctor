@@ -25,9 +25,9 @@ API_KEY = st.secrets["GOOGLE_API_KEY"]
 CSE_CX = st.secrets["SEARCH_ENGINE_ID"]
 genai.configure(api_key=API_KEY)
 
-# APRIL 2026 STABLE ALIASES (Fixed 404 issue)
-ID_MODEL = 'gemini-3.1-pro'   
-DIAG_MODEL = 'gemini-3.1-flash' 
+# STABLE MODELS (Guaranteed to exist)
+ID_MODEL = 'gemini-1.5-pro'   
+DIAG_MODEL = 'gemini-1.5-flash' 
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -42,7 +42,8 @@ def search_pinside(game, issue):
     url = f"https://www.googleapis.com/customsearch/v1?key={API_KEY}&cx={CSE_CX}&q={query}"
     try:
         res = requests.get(url, timeout=5).json()
-        return "\n".join([f"Pinside: {i['title']} - {i['snippet']}" for i in res.get('items', [])[:3]])
+        items = res.get('items', [])
+        return "\n".join([f"Pinside: {i['title']} - {i['snippet']}" for i in items[:3]])
     except: return "No Pinside threads found."
 
 def find_ipdb_schematics(game_name):
@@ -62,9 +63,8 @@ def process_request(user_input, history, specs=None, image=None):
         model_id = genai.GenerativeModel(ID_MODEL)
         id_prompt = f"""
         Identify the pinball machine: '{user_input}'
-        Look for rare or transitional games (6803, System 11, Gottlieb System 3).
         Return ONLY JSON: {{"mfg":"", "system":"", "is_em":false, "game":""}}
-        Example: 'Blackwater' -> {{"mfg":"Bally", "system":"6803", "is_em":false, "game":"Blackwater 100"}}
+        Example: 'Blackwater 100' -> {{"mfg":"Bally", "system":"6803", "is_em":false, "game":"Blackwater 100"}}
         """
         try:
             res = model_id.generate_content(id_prompt)
@@ -85,17 +85,18 @@ def process_request(user_input, history, specs=None, image=None):
     except: pass
 
     model_diag = genai.GenerativeModel(DIAG_MODEL)
-    full_prompt = [f"Role: Expert Pinball Doctor. Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})\nPINSIDE: {pinside_data}\nIPDB: {ipdb_data}\nWIKI: {wiki_context}\nHISTORY: {history}\nISSUE: {user_input}"]
-    if image: full_prompt.append(image)
+    prompt_parts = [f"Role: Expert Pinball Doctor. Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})\nPINSIDE: {pinside_data}\nIPDB: {ipdb_data}\nWIKI: {wiki_context}\nHISTORY: {history}\nISSUE: {user_input}"]
+    if image: prompt_parts.append(image)
     
-    return model_diag.generate_content(full_prompt).text, specs
+    response = model_diag.generate_content(prompt_parts)
+    return response.text, specs
 
 # --- AUTH SCREEN ---
 if not st.session_state.authenticated:
     st.title("🩺 Pinball Doctor")
     st.info("Authorized Technicians Only")
     tech_pass = st.text_input("Enter Tech Password", type="password")
-    if st.button("Login") or (tech_pass and tech_pass == st.secrets["TECH_PASSWORD"]):
+    if st.button("Login"):
         if tech_pass == st.secrets["TECH_PASSWORD"]:
             st.session_state.authenticated = True
             st.rerun()
@@ -108,7 +109,8 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Upload Board Photo", type=['png', 'jpg', 'jpeg'])
     st.divider()
     if st.button("🆕 New Repair Case"):
-        st.session_state.messages, st.session_state.specs = [], None
+        st.session_state.messages = []
+        st.session_state.specs = None
         st.rerun()
     if st.button("🚪 Logout"):
         st.session_state.clear()
@@ -121,17 +123,4 @@ if st.session_state.specs:
     s = st.session_state.specs
     box_placeholder = f"🔧 {s.get('game')} ({s.get('mfg')} {s.get('system')}) - Ask the Doctor..."
 else:
-    box_placeholder = "What's the machine and the issue? (e.g. Blackwater 100 won't start)"
-
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-if prompt := st.chat_input(box_placeholder):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    with st.chat_message("assistant"):
-        with st.spinner("Consulting the Trinity..."):
-            img = Image.open(uploaded_file) if uploaded_file else None
-            history = "\n".join([f"{m['role']}: {m['content']}" for m in st
+    box_placeholder = "What's the machine and the issue? (e.g. Blackwater 1
