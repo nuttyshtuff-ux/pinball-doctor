@@ -115,7 +115,7 @@ if prompt := st.chat_input(box_placeholder):
     with st.chat_message("user"):
         st.markdown(prompt)
     with st.chat_message("assistant"):
-        with st.spinner("Consulting the Trinity..."):
+        with st.spinner("Doctor Pinball is thinking..."):
             img = Image.open(uploaded_file) if uploaded_file else None
             history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
             answer, specs = process_request(prompt, history, st.session_state.specs, image=img)
