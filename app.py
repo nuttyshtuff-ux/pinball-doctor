@@ -10,6 +10,24 @@ from dotenv import load_dotenv
 # --- SETUP & CONFIG ---
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺", layout="centered")
 
+# CSS TO REMOVE THE TOP GAP
+st.markdown("""
+    <style>
+    /* Reduce padding at the top of the page */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 0rem !important;
+    }
+    /* Reduce gap between title and the next element */
+    h1 {
+        margin-bottom: -20px !important;
+    }
+    /* Hide the 'made with streamlit' footer */
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
 load_dotenv()
 API_KEY = st.secrets["GOOGLE_API_KEY"]
 CSE_CX = st.secrets["SEARCH_ENGINE_ID"]
