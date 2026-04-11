@@ -10,9 +10,9 @@ st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 load_dotenv()
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# Models
-ID_MODEL = 'gemini-1.5-pro'
-DIAG_MODEL = 'gemini-1.5-flash'
+# APRIL 2026 STABLE ALIASES
+ID_MODEL = 'gemini-3.1-pro'
+DIAG_MODEL = 'gemini-3.1-flash'
 
 # Session States
 for key in ["messages", "specs", "authenticated"]:
@@ -21,11 +21,12 @@ for key in ["messages", "specs", "authenticated"]:
 
 # --- TOOLS ---
 def search_trinity(game, issue, system, is_em):
-    # Pinside Search
-    res = requests.get(f"https://www.googleapis.com/customsearch/v1?key={st.secrets['GOOGLE_API_KEY']}&cx={st.secrets['SEARCH_ENGINE_ID']}&q={game}+{issue}+site:pinside.com").json()
-    pinside = "\n".join([f"{i['title']}: {i['snippet']}" for i in res.get('items', [])[:3]])
+    try:
+        url = f"https://www.googleapis.com/customsearch/v1?key={st.secrets['GOOGLE_API_KEY']}&cx={st.secrets['SEARCH_ENGINE_ID']}&q={game}+{issue}+site:pinside.com"
+        res = requests.get(url, timeout=5).json()
+        pinside = "\n".join([f"{i['title']}: {i['snippet']}" for i in res.get('items', [])[:3]])
+    except: pinside = "Search unavailable."
     
-    # PinWiki Context
     wiki = ""
     try:
         path = "EM_Repair" if is_em else system.replace(" ", "_")
@@ -66,22 +67,30 @@ if prompt := st.chat_input(placeholder):
     with st.chat_message("user"): st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Diagnosing..."):
-            # ID Machine
+        with st.spinner("Consulting the Trinity..."):
+            # ID Machine with Fallback logic
             if not spec:
-                m_id = genai.GenerativeModel(ID_MODEL)
-                prompt_id = f"Identify: '{prompt}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
-                res_id = m_id.generate_content(prompt_id)
-                spec = json.loads(res_id.text.strip().replace('```json', '').replace('```', ''))
-                st.session_state.specs = spec
+                try:
+                    m_id = genai.GenerativeModel(ID_MODEL)
+                    res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
+                except:
+                    # Fallback to Flash if Pro is not found in region
+                    m_id = genai.GenerativeModel(DIAG_MODEL)
+                    res_id = m_id.generate_content(f"Identify: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}")
+                
+                try:
+                    spec = json.loads(res_id.text.strip().replace('```json', '').replace('```', ''))
+                    st.session_state.specs = spec
+                except:
+                    spec = {"mfg":"Unknown", "system":"General", "is_em":False, "game":"Pinball Machine"}
+                    st.session_state.specs = spec
 
-            # Trinity Search
-            pins, wiki = search_trinity(spec['game'], prompt, spec['system'], spec['is_em'])
+            pins, wiki = search_trinity(spec.get('game', 'Machine'), prompt, spec.get('system', 'General'), spec.get('is_em', False))
             
             # Diagnostic
             m_diag = genai.GenerativeModel(DIAG_MODEL)
             hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
-            ctx = f"Game: {spec['game']} ({spec['system']})\nPinside: {pins}\nWiki: {wiki}\nIssue: {prompt}"
+            ctx = f"Game: {spec['game']} ({spec['system']})\nPinside: {pins}\nWiki: {wiki}\nIssue: {prompt}\nHistory: {hist}"
             
             inputs = [ctx]
             if up: inputs.append(Image.open(up))
