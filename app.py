@@ -10,19 +10,11 @@ from dotenv import load_dotenv
 # --- SETUP & CONFIG ---
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺", layout="centered")
 
-# CSS TO REMOVE THE TOP GAP
+# Zero-Gap CSS
 st.markdown("""
     <style>
-    /* Reduce padding at the top of the page */
-    .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
-    }
-    /* Reduce gap between title and the next element */
-    h1 {
-        margin-bottom: -20px !important;
-    }
-    /* Hide the 'made with streamlit' footer */
+    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+    h1 { margin-bottom: -20px !important; }
     footer {visibility: hidden;}
     header {visibility: hidden;}
     </style>
@@ -32,7 +24,10 @@ load_dotenv()
 API_KEY = st.secrets["GOOGLE_API_KEY"]
 CSE_CX = st.secrets["SEARCH_ENGINE_ID"]
 genai.configure(api_key=API_KEY)
-MODEL_NAME = 'gemini-2.5-flash'
+
+# APRIL 2026 STABLE MODELS
+ID_MODEL = 'gemini-3.1-pro-preview'   # The "Brain" for identification
+DIAG_MODEL = 'gemini-3.1-flash-preview' # The "Speed" for chat
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -63,17 +58,24 @@ def find_ipdb_schematics(game_name):
 
 # --- AI ENGINE ---
 def process_request(user_input, history, specs=None, image=None):
-    model = genai.GenerativeModel(MODEL_NAME)
+    # STEP 1: Identification (using Pro model)
     if not specs:
-        id_prompt = f"Identify pinball machine for: '{user_input}'. Return ONLY JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
+        model_id = genai.GenerativeModel(ID_MODEL)
+        id_prompt = f"""
+        Identify the pinball machine: '{user_input}'
+        Look for rare or transitional games (6803, System 11, Gottlieb System 3).
+        Return ONLY JSON: {{"mfg":"", "system":"", "is_em":false, "game":""}}
+        Example: 'Blackwater' -> {{"mfg":"Bally", "system":"6803", "is_em":false, "game":"Blackwater 100"}}
+        """
         try:
-            res = model.generate_content(id_prompt)
+            res = model_id.generate_content(id_prompt)
             specs = json.loads(res.text.strip().replace('```json', '').replace('```', ''))
             st.session_state.specs = specs
         except:
             specs = {"mfg": "Unknown", "system": "General", "is_em": False, "game": "Pinball Machine"}
             st.session_state.specs = specs
 
+    # STEP 2: Data Gathering
     pinside_data = search_pinside(specs.get('game', 'Unknown'), user_input)
     ipdb_data = find_ipdb_schematics(specs.get('game', 'Unknown'))
     wiki_context = ""
@@ -84,9 +86,12 @@ def process_request(user_input, history, specs=None, image=None):
         wiki_context = BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:2000]
     except: pass
 
+    # STEP 3: Diagnosis (using Flash model)
+    model_diag = genai.GenerativeModel(DIAG_MODEL)
     full_prompt = [f"Role: Expert Pinball Doctor. Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})\nPINSIDE: {pinside_data}\nIPDB: {ipdb_data}\nWIKI: {wiki_context}\nHISTORY: {history}\nISSUE: {user_input}"]
     if image: full_prompt.append(image)
-    return model.generate_content(full_prompt).text, specs
+    
+    return model_diag.generate_content(full_prompt).text, specs
 
 # --- AUTH SCREEN ---
 if not st.session_state.authenticated:
@@ -115,25 +120,22 @@ with st.sidebar:
 # --- MAIN INTERFACE ---
 st.title("🩺 Pinball Doctor")
 
-# DYNAMIC PLACEHOLDER LOGIC
 if st.session_state.specs:
     s = st.session_state.specs
     box_placeholder = f"🔧 {s.get('game')} ({s.get('mfg')} {s.get('system')}) - Ask the Doctor..."
 else:
-    box_placeholder = "What's the machine and the issue? (e.g. Gorgar no sound)"
+    box_placeholder = "What's the machine and the issue? (e.g. Blackwater 100 won't start)"
 
-# Show Chat Messages
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Chat Input with the Dynamic Placeholder
 if prompt := st.chat_input(box_placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
     with st.chat_message("assistant"):
-        with st.spinner("Consulting the Trinity..."):
+        with st.spinner("Doctor Pinball is Thinking..."):
             img = Image.open(uploaded_file) if uploaded_file else None
             history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
             answer, specs = process_request(prompt, history, st.session_state.specs, image=img)
