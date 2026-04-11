@@ -8,8 +8,7 @@ from PIL import Image
 st.set_page_config(page_title="Pinball Doctor", page_icon="🩺")
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# APRIL 2026 STABLE MODELS (Confirmed active on v1beta)
-# gemini-2.5-flash is currently the recommended stable path for high-volume apps.
+# APRIL 2026 STABLE MODEL
 MODEL_NAME = 'gemini-2.5-flash' 
 
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -66,29 +65,39 @@ if prompt := st.chat_input("Machine + Issue..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Doctor Pinball is Thinking..."):
-            # Use 2.5-flash for both ID and Diagnosis to minimize API handshakes
             try:
                 model = genai.GenerativeModel(MODEL_NAME)
             except:
-                # Absolute emergency fallback string
                 model = genai.GenerativeModel('gemini-pro-latest')
 
             # STEP 1: Identification (Powered by Web Search)
             if not st.session_state.specs:
                 search_evidence = get_raw_search_data(prompt)
-                id_p = f"Analyze: {search_evidence}\nIdentify machine for: '{prompt}'. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":true/false, \"game\":\"\"}}"
+                
+                # THE UPDATED EVIDENCE-FIRST PROMPT
+                id_p = f"""
+                ACT AS A DATA EXTRACTOR. 
+                Use the 'Search Evidence' below to identify the machine. 
+                If the Search Evidence and your internal memory disagree, the Search Evidence is CORRECT.
+
+                Search Evidence:
+                {search_evidence}
+
+                User Prompt: '{prompt}'
+
+                Return JSON ONLY: {{"mfg":"", "system":"", "is_em":true/false, "game":""}}
+                """
                 
                 try:
                     res = model.generate_content(id_p)
                     clean_res = res.text.strip().replace('```json', '').replace('```', '')
                     st.session_state.specs = json.loads(clean_res)
-                except Exception as e:
-                    # Generic fallback so the app continues
+                except Exception:
                     st.session_state.specs = {"mfg":"Unknown", "system":"General", "is_em":True, "game":"Pinball Machine"}
             
             spec = st.session_state.specs
             
-            # STEP 2: Specific Data Gathering
+            # STEP 2: Specific Data Gathering (Using the identified game)
             search_evidence = get_raw_search_data(f"{spec['mfg']} {spec['game']} {prompt}")
             wiki = get_wiki_context(spec['system'], spec['is_em'])
             
@@ -104,4 +113,4 @@ if prompt := st.chat_input("Machine + Issue..."):
                 st.markdown(ans_res.text)
                 st.session_state.messages.append({"role": "assistant", "content": ans_res.text})
             except Exception as e:
-                st.error(f"AI Handshake failed with {MODEL_NAME}. Error: {str(e)}")
+                st.error(f"AI Handshake failed. Error: {str(e)}")
