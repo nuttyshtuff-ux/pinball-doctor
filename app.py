@@ -12,23 +12,8 @@ st.set_page_config(
     page_title="Pinball Doctor", 
     page_icon="🩺", 
     layout="centered",
-    initial_sidebar_state="expanded" # Forces sidebar open on load
+    initial_sidebar_state="auto" # Let Streamlit decide based on screen size
 )
-
-# FIXED: Removed 'header {visibility: hidden;}' so the sidebar arrow returns!
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Ensure the sidebar toggle button is visible and high-contrast */
-    .st-emotion-cache-1avcm0n {
-        background-color: #ff4b4b !important;
-        color: white !important;
-        border-radius: 50%;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
 load_dotenv()
 API_KEY = st.secrets["GOOGLE_API_KEY"]
@@ -104,56 +89,56 @@ def process_request(user_input, history, specs=None, image=None):
     response = model.generate_content(full_prompt)
     return response.text, specs
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("🔐 Tech Access")
-    if not st.session_state.authenticated:
-        tech_pass = st.text_input("Enter Tech Password", type="password")
+# --- AUTHENTICATION SCREEN ---
+if not st.session_state.authenticated:
+    st.title("🩺 Pinball Doctor")
+    st.info("Authorized Technicians Only")
+    tech_pass = st.text_input("Enter Tech Password", type="password")
+    if st.button("Login"):
         if tech_pass == st.secrets["TECH_PASSWORD"]:
             st.session_state.authenticated = True
             st.rerun()
-        elif tech_pass != "":
-            st.error("Incorrect Password")
-    
-    if st.session_state.authenticated:
-        st.success("Authorized Tech")
-        st.header("Visual Aid")
-        uploaded_file = st.file_uploader("Upload Board Photo", type=['png', 'jpg', 'jpeg'])
-        st.divider()
-        if st.button("🆕 New Repair Case"):
-            st.session_state.messages = []
-            st.session_state.specs = None
-            st.rerun()
-        if st.button("🚪 Logout"):
-            st.session_state.clear()
-            st.rerun()
+        else:
+            st.error("Access Denied.")
+    st.stop() # Stops the rest of the app from running until logged in
+
+# --- SIDEBAR (Tools Only) ---
+with st.sidebar:
+    st.header("🛠️ Tech Tools")
+    uploaded_file = st.file_uploader("Upload Board Photo", type=['png', 'jpg', 'jpeg'])
+    st.divider()
+    if st.button("🆕 New Repair Case"):
+        st.session_state.messages = []
+        st.session_state.specs = None
+        st.rerun()
+    if st.button("🚪 Logout"):
+        st.session_state.clear()
+        st.rerun()
 
 # --- MAIN INTERFACE ---
-if st.session_state.authenticated:
-    st.title("🩺 Pinball Doctor")
-    if not st.session_state.specs:
-        st.info("What's the machine and the issue?")
-    else:
-        s = st.session_state.specs
-        with st.expander(f"🔧 Active Case: {s.get('game')}", expanded=False):
-            st.write(f"**Manufacturer:** {s.get('mfg')} | **System:** {s.get('system')}")
-
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    if prompt := st.chat_input(""):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        with st.chat_message("assistant"):
-            with st.spinner("Consulting the Trinity..."):
-                img = Image.open(uploaded_file) if uploaded_file else None
-                history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
-                answer, specs = process_request(prompt, history, st.session_state.specs, image=img)
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
-                st.toast(f"Diagnostics complete for {specs.get('game')}", icon='🧠')
+st.title("🩺 Pinball Doctor")
+if not st.session_state.specs:
+    st.info("Describe the issue (Machine Name + Symptom)")
 else:
-    st.title("🩺 Pinball Doctor")
-    st.warning("Please enter the Tech Password in the sidebar.")
+    s = st.session_state.specs
+    with st.expander(f"🔧 Active Case: {s.get('game')}", expanded=False):
+        st.write(f"**Manufacturer:** {s.get('mfg')} | **System:** {s.get('system')}")
+
+# Show Chat Messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# Chat Input
+if prompt := st.chat_input("Ask the Doctor..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    with st.chat_message("assistant"):
+        with st.spinner("Consulting the Trinity..."):
+            img = Image.open(uploaded_file) if uploaded_file else None
+            history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
+            answer, specs = process_request(prompt, history, st.session_state.specs, image=img)
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            st.toast(f"Diagnostics complete.", icon='🧠')
