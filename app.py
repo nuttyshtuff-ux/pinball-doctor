@@ -56,7 +56,7 @@ with st.sidebar:
 # --- MAIN ---
 st.title("🩺 Pinball Doctor")
 spec = st.session_state.specs
-placeholder = f"🔧 {spec['game']} - Ask..." if spec else "Machine + Issue (e.g. Blackwater 100 won't boot)"
+placeholder = f"🔧 {spec['game']} - Ask..." if spec else "Machine + Issue"
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
