@@ -25,9 +25,9 @@ API_KEY = st.secrets["GOOGLE_API_KEY"]
 CSE_CX = st.secrets["SEARCH_ENGINE_ID"]
 genai.configure(api_key=API_KEY)
 
-# APRIL 2026 STABLE MODELS
-ID_MODEL = 'gemini-3.1-pro-preview'   # The "Brain" for identification
-DIAG_MODEL = 'gemini-3.1-flash-preview' # The "Speed" for chat
+# APRIL 2026 STABLE ALIASES (Fixed 404 issue)
+ID_MODEL = 'gemini-3.1-pro'   
+DIAG_MODEL = 'gemini-3.1-flash' 
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -58,7 +58,6 @@ def find_ipdb_schematics(game_name):
 
 # --- AI ENGINE ---
 def process_request(user_input, history, specs=None, image=None):
-    # STEP 1: Identification (using Pro model)
     if not specs:
         model_id = genai.GenerativeModel(ID_MODEL)
         id_prompt = f"""
@@ -75,7 +74,6 @@ def process_request(user_input, history, specs=None, image=None):
             specs = {"mfg": "Unknown", "system": "General", "is_em": False, "game": "Pinball Machine"}
             st.session_state.specs = specs
 
-    # STEP 2: Data Gathering
     pinside_data = search_pinside(specs.get('game', 'Unknown'), user_input)
     ipdb_data = find_ipdb_schematics(specs.get('game', 'Unknown'))
     wiki_context = ""
@@ -86,7 +84,6 @@ def process_request(user_input, history, specs=None, image=None):
         wiki_context = BeautifulSoup(res.text, 'html.parser').find(id="mw-content-text").get_text()[:2000]
     except: pass
 
-    # STEP 3: Diagnosis (using Flash model)
     model_diag = genai.GenerativeModel(DIAG_MODEL)
     full_prompt = [f"Role: Expert Pinball Doctor. Machine: {specs.get('game')} ({specs.get('mfg')} {specs.get('system')})\nPINSIDE: {pinside_data}\nIPDB: {ipdb_data}\nWIKI: {wiki_context}\nHISTORY: {history}\nISSUE: {user_input}"]
     if image: full_prompt.append(image)
@@ -135,9 +132,6 @@ if prompt := st.chat_input(box_placeholder):
     with st.chat_message("user"):
         st.markdown(prompt)
     with st.chat_message("assistant"):
-        with st.spinner("Doctor Pinball is Thinking..."):
+        with st.spinner("Consulting the Trinity..."):
             img = Image.open(uploaded_file) if uploaded_file else None
-            history = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
-            answer, specs = process_request(prompt, history, st.session_state.specs, image=img)
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+            history = "\n".join([f"{m['role']}: {m['content']}" for m in st
