@@ -15,12 +15,10 @@ if "specs" not in st.session_state: st.session_state.specs = None
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 
 # --- SEARCH TOOLS ---
-def get_raw_search_data(query, is_stern=False):
-    """Enhanced search that targets Stern Tech School for modern machines."""
+def get_raw_search_data(query, is_modern_stern=False):
     search_query = f"{query} pinball"
-    if is_stern:
-        search_query = f"{query} Stern Tech School official service troubleshooting"
-        
+    if is_modern_stern:
+        search_query = f"{query} Stern Pinball Tech School official troubleshooting"
     try:
         url = f"https://www.googleapis.com/customsearch/v1?key={st.secrets['GOOGLE_API_KEY']}&cx={st.secrets['SEARCH_ENGINE_ID']}&q={search_query}"
         res = requests.get(url, timeout=10).json()
@@ -32,6 +30,7 @@ def get_raw_search_data(query, is_stern=False):
 def get_wiki_context(system, is_em):
     try:
         path = "EM_Repair" if is_em else system.replace(" ", "_")
+        if "Data East" in system: path = "Data_East/Sega"
         r = requests.get(f"https://pinwiki.com/wiki/index.php/{path}", timeout=8)
         content = BeautifulSoup(r.text, 'html.parser').find(id="mw-content-text")
         return content.get_text()[:1500] if content else "Wiki data empty."
@@ -49,7 +48,9 @@ if not st.session_state.authenticated:
 
 # --- SIDEBAR ---
 with st.sidebar:
-    up = st.file_uploader("Upload Board/Part Photo", type=['png', 'jpg', 'jpeg'])
+    # UPDATED: Added PDF support and changed caption
+    up = st.file_uploader("Upload Board Photo or PDF Manual", type=['png', 'jpg', 'jpeg', 'pdf'])
+    
     if st.button("🆕 New Repair Case"):
         st.session_state.messages, st.session_state.specs = [], None
         st.rerun()
@@ -61,7 +62,7 @@ spec = st.session_state.specs
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
-placeholder = "Enter Mfg + Game (e.g., Stern Godzilla)" if not spec else f"Analyzing {spec['game']}..."
+placeholder = "Enter Mfg + Game (e.g. Williams Triple Action)"
 
 if prompt := st.chat_input(placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -71,31 +72,45 @@ if prompt := st.chat_input(placeholder):
         with st.spinner("Doctor Pinball is Thinking..."):
             model = genai.GenerativeModel(MODEL_NAME)
             
-            # STEP 1: Identification
             if not spec:
-                # Blind search to help ID
                 search_evidence = get_raw_search_data(prompt)
-                id_p = f"Identify machine: '{prompt}'. Evidence: {search_evidence}. Return JSON ONLY: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
+                id_p = f"Identify: '{prompt}'. Evidence: {search_evidence}. Return JSON: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
                 try:
                     res = model.generate_content(id_p)
                     clean_res = res.text.strip().replace('```json', '').replace('```', '')
                     spec = json.loads(clean_res)
                     st.session_state.specs = spec
                 except:
-                    spec = {"mfg":"Unknown", "system":"General", "is_em":True, "game":"Pinball Machine"}
+                    spec = {"mfg":"Unknown", "system":"General", "is_em":True, "game":"Pinball"}
                     st.session_state.specs = spec
 
-            # STEP 2: Targeted Diagnostics (Now checks for Stern Tech Videos)
-            is_stern = spec.get('mfg', '').lower() == 'stern'
-            technical_data = get_raw_search_data(f"{spec['mfg']} {spec['game']} {prompt}", is_stern=is_stern)
+            # Logic checks
+            system_name = spec.get('system', '').upper()
+            is_modern_stern = (spec.get('mfg', '').lower() == 'stern') and any(s in system_name for s in ["SPIKE", "SAM", "WHITESTAR"])
+            
+            technical_data = get_raw_search_data(f"{spec['mfg']} {spec['game']} {prompt}", is_modern_stern=is_modern_stern)
             wiki = get_wiki_context(spec['system'], spec['is_em'])
             
-            # STEP 3: Final Analysis
-            hist = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[:-1]])
-            ctx = f"Machine: {spec['mfg']} {spec['game']}\nTech Data/Videos: {technical_data}\nWiki: {wiki}\nIssue: {prompt}\nHistory: {hist}"
+            # THE "ACTIVE PARTNER" PROMPT
+            ctx = f"""
+            You are Doctor Pinball. The user has provided context for {spec['mfg']} {spec['game']}.
+            MISSION: Use the uploaded file (if provided) and tech data to solve the issue.
+            DO NOT be a passive assistant. If a manual is uploaded, reference specific wire colors, switch numbers, or circuit paths.
             
-            inputs = [ctx]
-            if up: inputs.append(Image.open(up))
+            System: {spec['system']}
+            Data: {technical_data}
+            Wiki: {wiki}
+            """
+            
+            # HANDLING MULTIMODAL INPUT (Photo or PDF)
+            inputs = [ctx, prompt]
+            if up:
+                if up.type == "application/pdf":
+                    # Send PDF data directly to Gemini
+                    inputs.append({"mime_type": "application/pdf", "data": up.getvalue()})
+                else:
+                    # Handle Image files
+                    inputs.append(Image.open(up))
             
             try:
                 ans = model.generate_content(inputs).text
