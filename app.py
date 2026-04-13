@@ -67,7 +67,7 @@ spec = st.session_state.specs
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
-placeholder = "Enter Mfg + Game (e.g. Williams Triple Action)"
+placeholder = "Enter Mfg + Game (e.g. Williams Triple Action) + Issue. Upload any relevant schematics and manuals in the sidebar."
 
 if prompt := st.chat_input(placeholder):
     st.session_state.messages.append({"role": "user", "content": prompt})
