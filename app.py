@@ -178,37 +178,7 @@ with st.sidebar:
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
-# ---------------------------------------------------------
-# 3. UI + AUTH
-# ---------------------------------------------------------
 
-st.title("🩺 Doctor Pinball")
-
-if not st.session_state.authenticated:
-    pw = st.text_input("Tech Password", type="password")
-    if st.button("Login"):
-        if pw == st.secrets.get("TECH_PASSWORD"):
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
-    st.stop()
-
-with st.sidebar:
-    st.header("Repair Bench")
-    up_files = st.file_uploader(
-        "Upload Manuals/Photos",
-        type=["png", "jpg", "jpeg", "pdf"],
-        accept_multiple_files=True
-    )
-    if st.button("🆕 New Repair Case"):
-        st.session_state.messages = []
-        st.session_state.specs = None
-        st.rerun()
-
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
 # ---------------------------------------------------------
 # 4. CHAT LOGIC
 # ---------------------------------------------------------
