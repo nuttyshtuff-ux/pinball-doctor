@@ -30,6 +30,4 @@ if "authenticated" not in st.session_state:
 # 2. SCRAPING + DATA HELPERS
 # ---------------------------------------------------------
 
-def scrape_thread_content(url: str) -> str:
-    try:
-        allowed
+def scrape
