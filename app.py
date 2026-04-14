@@ -225,4 +225,18 @@ Wiki (PinWiki): {wiki_text}
 Community (Pinside / others):
 {deep_data}
 """
+            inputs = [ctx, prompt]
+
+            if up_files:
+                for up in up_files:
+                    data = up.read()
+                    if data:
+                        inputs.append({"mime_type": up.type, "data": data})
+
+            try:
+                ans = model.generate_content(inputs).text
+                st.markdown(ans)
+                st.session_state.messages.append({"role": "assistant", "content": ans})
+            except Exception as e:
+                st.error(f"Diagnostic Error: {str(e)}")
 
