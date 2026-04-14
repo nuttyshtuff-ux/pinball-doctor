@@ -16,4 +16,20 @@ if "GOOGLE_API_KEY" not in st.secrets:
 
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-MODEL_NAME =
+MODEL_NAME = "gemini-2.5-flash"
+SEARCH_ENGINE_ID = st.secrets.get("SEARCH_ENGINE_ID")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "specs" not in st.session_state:
+    st.session_state.specs = None
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+# ---------------------------------------------------------
+# 2. SCRAPING + DATA HELPERS
+# ---------------------------------------------------------
+
+def scrape_thread_content(url: str) -> str:
+    try:
+        allowed
