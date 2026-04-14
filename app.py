@@ -19,26 +19,35 @@ if "messages" not in st.session_state: st.session_state.messages = []
 if "specs" not in st.session_state: st.session_state.specs = None
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 
-# --- 2. IMPROVED TOOLS ---
+# --- 2. THE DEEP TOOLS ---
 
-def get_raw_search_data(query, mfg, sys):
-    search_query = f"{mfg} {query} pinball schematic manual arcade-museum ipdb pinside"
+def scrape_thread_content(url):
+    """Targets tech content without bulk crawling."""
     try:
-        url = f"https://www.googleapis.com/customsearch/v1?key={st.secrets['GOOGLE_API_KEY']}&cx={st.secrets['SEARCH_ENGINE_ID']}&q={search_query}"
-        res = requests.get(url, timeout=5).json()
-        if "items" in res:
-            return "\n".join([f"VERIFIED SOURCE: {i['title']}\nVERIFIED URL: {i['link']}\nCONTENT: {i['snippet']}\n---" for i in res['items'][:4]])
+        if not any(domain in url for domain in ["pinside.com", "pinwiki.com", "arcade-museum.com"]):
+            return ""
+        
+        headers = {'User-Agent': 'DoctorPinballDiagnosticBot/1.2 (Educational Use)'}
+        r = requests.get(url, headers=headers, timeout=8)
+        
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            if "pinside.com" in url:
+                # Target the actual user-contributed fix areas
+                posts = soup.find_all('div', class_='forum-post-content')
+                return "\n".join([p.get_text()[:600] for p in posts[:8]]) 
+            return soup.get_text()[:2500]
     except:
         pass
-    return "No verified external links found via search."
+    return ""
 
 def get_wiki_context(system, is_em):
     wiki_map = {
         "WPC": "Williams_WPC", "SYSTEM 11": "Williams_System_11", "SYSTEM 3": "Gottlieb_System_3",
-        "SYSTEM 80": "Gottlieb_System_80", "WHITESTAR": "Sega/Stern_White_Star", "SAM": "Stern_SAM",
-        "SPIKE": "Stern_SPIKE", "6803": "Bally_6803", "DATA EAST": "Data_East/Sega"
+        "SYSTEM 80": "Gottlieb_System_80", "SYSTEM 1": "Gottlieb_System_1", "WHITESTAR": "Sega/Stern_White_Star",
+        "SAM": "Stern_SAM", "SPIKE": "Stern_SPIKE", "6803": "Bally_6803", "DATA EAST": "Data_East/Sega",
+        "AS-2518": "Bally/Stern", "BALLY SS": "Bally/Stern", "MPU-100": "Bally/Stern", "MPU-200": "Bally/Stern"
     }
-    
     sys_upper = system.upper()
     path = system.replace(" ", "_")
     for key, official_path in wiki_map.items():
@@ -51,16 +60,31 @@ def get_wiki_context(system, is_em):
     try:
         r = requests.get(full_url, timeout=5)
         if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            content = soup.find(id="mw-content-text")
-            return content.get_text()[:2000], full_url
+            content = BeautifulSoup(r.text, 'html.parser').find(id="mw-content-text")
+            return content.get_text()[:2500], full_url
     except:
         pass
-    return "Specific PinWiki entry unavailable.", full_url
+    return "Wiki content unavailable.", "https://pinwiki.com"
 
-# --- 3. LOGIN GATE ---
+def get_deep_search_data(query, mfg, sys):
+    tech_boost = f"{mfg} {sys} {query} pinball repair board troubleshooting site:pinside.com OR site:pinwiki.com"
+    try:
+        url = f"https://www.googleapis.com/customsearch/v1?key={st.secrets['GOOGLE_API_KEY']}&cx={st.secrets['SEARCH_ENGINE_ID']}&q={tech_boost}"
+        res = requests.get(url, timeout=5).json()
+        if "items" in res:
+            deep_results = []
+            for i in res['items'][:3]: # Only deep-read the top 3 matches
+                content = scrape_thread_content(i['link'])
+                deep_results.append(f"SOURCE: {i['title']}\nURL: {i['link']}\nDEEP TEXT: {content}\n---")
+            return "\n".join(deep_results)
+    except:
+        pass
+    return "No deep search data available."
+
+# --- 3. UI & CHAT LOGIC ---
+st.title("🩺 Doctor Pinball")
+
 if not st.session_state.authenticated:
-    st.title("🩺 Doctor Pinball")
     pw = st.text_input("Tech Password", type="password")
     if st.button("Login"):
         if pw == st.secrets["TECH_PASSWORD"]:
@@ -68,89 +92,56 @@ if not st.session_state.authenticated:
             st.rerun()
     st.stop()
 
-# --- 4. SIDEBAR ---
+# (Sidebar and display logic remains same as v1.1.12...)
 with st.sidebar:
     st.header("Repair Bench")
-    up_files = st.file_uploader("Upload Manuals/Photos", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
-    if st.button("🆕 New Repair Case"):
+    up_files = st.file_uploader("Upload Docs", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True)
+    if st.button("🆕 New Case"):
         st.session_state.messages, st.session_state.specs = [], None
         st.rerun()
-
-# --- 5. MAIN INTERFACE ---
-st.title("🩺 Doctor Pinball")
-spec = st.session_state.specs
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
-# --- 6. CHAT LOGIC ---
 if prompt := st.chat_input("Enter Mfg + Game"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("CONSULTING DOCUMENTATION..."):
+        with st.spinner("DEEP-READING THREADS..."):
             model = genai.GenerativeModel(MODEL_NAME)
             
-            # --- INITIALIZE SCOPE TO PREVENT NameError ---
-            tech_data = "Pending search..."
-            wiki_text = "Pending wiki..."
-            verified_wiki_url = "https://pinwiki.com"
-            
-            # 1. Identification
-            if not spec:
-                id_p = f"Identify: '{prompt}'. Return JSON ONLY: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
-                try:
-                    res = model.generate_content(id_p)
-                    raw_text = res.text.strip().replace('```json', '').replace('```', '')
-                    spec = json.loads(raw_text)
-                except:
-                    spec = {"mfg": "Unknown", "system": "General", "is_em": False, "game": prompt}
-                st.session_state.specs = spec
+            # Identification
+            if not st.session_state.specs:
+                id_p = f"Identify: '{prompt}'. JSON ONLY: {{\"mfg\":\"\", \"system\":\"\", \"is_em\":false, \"game\":\"\"}}"
+                res = model.generate_content(id_p)
+                st.session_state.specs = json.loads(res.text.strip().replace('```json', '').replace('```', ''))
 
-            # 2. Re-assign identifiers safely
-            m_val = st.session_state.specs.get('mfg', 'Unknown')
-            s_val = st.session_state.specs.get('system', 'General')
-            g_val = st.session_state.specs.get('game', 'Game')
-            em_val = st.session_state.specs.get('is_em', False)
-
-            # 3. Data Retrieval
-            tech_data = get_raw_search_data(prompt, m_val, s_val)
-            wiki_text, verified_wiki_url = get_wiki_context(s_val, em_val)
+            spec = st.session_state.specs
             
-            # 4. Specialist Prompt
+            # Deep Data Gathering
+            wiki_text, wiki_url = get_wiki_context(spec['system'], spec['is_em'])
+            deep_data = get_deep_search_data(prompt, spec['mfg'], spec['system'])
+            
             ctx = f"""
-            You are a Senior Pinball Specialist (30+ years experience).
-            Machine: {m_val} {g_val} ({s_val})
+            You are a Senior Pinball Specialist. 
+            Machine: {spec['mfg']} {spec['game']} ({spec['system']})
             
-            STRICT LINKING RULES:
-            1. Provide clickable Markdown links for ALL search data: [Title](URL).
-            2. DO NOT invent URLs for Arcade-Museum or IPDB. ONLY use 'VERIFIED URL' links from the Search Data.
-            3. Cite the verified PinWiki URL: {verified_wiki_url}
-            4. Credit community members by name if they appear in search snippets.
-
-            TECHNICAL RULES:
-            1. User-provided data is GROUND TRUTH.
-            2. Cite specific manual pages/quadrants.
-            3. Admit if visuals are blurry; recommend a multimeter test.
-            4. TONE: Professional, neutral, no sarcasm.
+            STRICT CITATION RULE:
+            - You MUST credit Pinside threads/users found in DEEP DATA.
+            - Provide clickable links: [Title](URL).
             
-            CONTEXT:
-            Wiki: {wiki_text}
-            Search Data: {tech_data}
+            DATA:
+            Wiki: {wiki_text} (Source: {wiki_url})
+            Deep Search: {deep_data}
             """
             
+            # Input assembly and model call...
             inputs = [ctx, prompt]
             if up_files:
                 for up in up_files:
-                    if up.type == "application/pdf":
-                        inputs.append({"mime_type": "application/pdf", "data": up.getvalue()})
-                    else:
-                        inputs.append(Image.open(up))
+                    inputs.append(Image.open(up) if up.type != "application/pdf" else {"mime_type": "application/pdf", "data": up.getvalue()})
             
-            try:
-                ans = model.generate_content(inputs).text
-                st.markdown(ans)
-                st.session_state.messages.append({"role": "assistant", "content": ans})
-            except Exception as e:
-                st.error(f"Diagnostic failed: {str(e)}")
+            ans = model.generate_content(inputs).text
+            st.markdown(ans)
+            st.session_state.messages.append({"role": "assistant", "content": ans})
