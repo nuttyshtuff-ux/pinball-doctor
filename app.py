@@ -239,7 +239,6 @@ if prompt:
                 spec.get("mfg", ""),
                 spec.get("system", "")
             )
-
             ctx = f"""
 You are a Senior Pinball Specialist.
 
@@ -249,3 +248,10 @@ STRICT CITATION RULE:
 - You MUST credit Pinside/Wiki sources found in the data.
 - Provide clickable links: [Title](URL).
 
+CONTEXT:
+Wiki (PinWiki): {wiki_text}
+(Source: {wiki_url})
+
+Community (Pinside / others):
+{deep_data}
+"""
